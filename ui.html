@@ -100,6 +100,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
 .graph-log .row{margin-bottom:6px;padding-bottom:6px;border-bottom:1px dashed var(--bd2)}
 .graph-log .row:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
 .graph-log .btn{padding:2px 6px;border-radius:4px;border:1px solid var(--bd2);background:transparent;color:var(--t2);font:600 8px var(--mono);cursor:pointer}
+.graph-log select{background:var(--bg);color:var(--t2);border:1px solid var(--bd2);border-radius:4px;font:600 8px var(--mono);padding:2px 4px}
 /* Misc */
 .empty{text-align:center;padding:50px;color:var(--t3);font:400 11px var(--mono)}
 .empty .big{font-size:36px;margin-bottom:10px;opacity:.3}
@@ -132,6 +133,11 @@ let graphFilters={types:new Set(LANE_ORDER),minRisk:0,focus:null};
 let graphLayout={ranksep:70,nodesep:18,ranker:'network-simplex'};
 let graphView=null;
 let graphPathLog=[];
+let graphCompare={a:null,b:null,summary:null};
+let riskWeights={
+  nodeType:{domain:1,subdomain:1,ip:1,port:1,url:1,path:1},
+  edgeType:{has_subdomain:0,resolves_to:0,exposes:0,serves:0,redirects_to:0,contains:0}
+};
 
 const PAGES=[
   {id:'dashboard',ic:'◈',label:'Dashboard'},
@@ -390,6 +396,7 @@ function renderGraphFlow(c){
           ).join('')}
         </select>
       </label>
+      <button class="tag graph-btn" onclick="openWeightModal()">Weights</button>
       <label class="tag graph-risk">
         <span>START</span>
         <input id="path-start" list="graph-node-list" placeholder="node_id or label">
@@ -439,6 +446,51 @@ function setLayoutSep(kind, v){
 function setRanker(v){
   graphLayout.ranker=v;
   initD3Graph();
+}
+function loadRiskWeights(){
+  try{
+    const raw=localStorage.getItem('gr_risk_weights');
+    if(!raw) return;
+    const parsed=JSON.parse(raw);
+    if(parsed?.nodeType) riskWeights.nodeType={...riskWeights.nodeType,...parsed.nodeType};
+    if(parsed?.edgeType) riskWeights.edgeType={...riskWeights.edgeType,...parsed.edgeType};
+  }catch(e){}
+}
+function saveRiskWeights(){
+  localStorage.setItem('gr_risk_weights', JSON.stringify(riskWeights));
+}
+function openWeightModal(){
+  const nt=riskWeights.nodeType;
+  const et=riskWeights.edgeType;
+  showModal(`<h3>Risk Weighting</h3>
+    <label>Node Weights</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      ${LANE_ORDER.map(t=>`
+        <div><label>${t}</label><input id="w-node-${t}" value="${nt[t]}"></div>
+      `).join('')}
+    </div>
+    <label style="margin-top:10px">Edge Weights</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      ${Object.keys(et).map(t=>`
+        <div><label>${t}</label><input id="w-edge-${t}" value="${et[t]}"></div>
+      `).join('')}
+    </div>
+    <div class="btns">
+      <button onclick="closeModal()">Cancel</button>
+      <button class="primary" onclick="saveWeightModal()">Save</button>
+    </div>`);
+}
+function saveWeightModal(){
+  LANE_ORDER.forEach(t=>{
+    const v=parseFloat($('#w-node-'+t)?.value);
+    if(!Number.isNaN(v)) riskWeights.nodeType[t]=v;
+  });
+  Object.keys(riskWeights.edgeType).forEach(t=>{
+    const v=parseFloat($('#w-edge-'+t)?.value);
+    if(!Number.isNaN(v)) riskWeights.edgeType[t]=v;
+  });
+  saveRiskWeights();
+  closeModal();
 }
 function setPathEndpoint(which, id){
   const input=document.getElementById(which==='start'?'path-start':'path-end');
@@ -520,7 +572,9 @@ function highlightPath(mode, startRaw='', endRaw=''){
   const score=new Map();
   const prev=new Map();
   ordered.forEach(n=>{
-    const base=mode==='risk'?Math.max(1, n.risk_score||0):1;
+    const w=riskWeights.nodeType[n.node_type]??1;
+    const baseRisk=Math.max(1, (n.risk_score||0) * w);
+    const base=mode==='risk'?baseRisk:1;
     score.set(n.id, startId? -Infinity : base);
     prev.set(n.id, null);
   });
@@ -532,7 +586,9 @@ function highlightPath(mode, startRaw='', endRaw=''){
       if(info) info.textContent='Path: start not in view';
       return;
     }
-    score.set(startId, mode==='risk'?Math.max(1, sNode.risk_score||0):1);
+    const w=riskWeights.nodeType[sNode.node_type]??1;
+    const baseRisk=Math.max(1, (sNode.risk_score||0) * w);
+    score.set(startId, mode==='risk'?baseRisk:1);
   }
   ordered.forEach(n=>{
     const cur=score.get(n.id);
@@ -542,7 +598,10 @@ function highlightPath(mode, startRaw='', endRaw=''){
       const t=l._tid;
       const tn=nodeById.get(t);
       if(!tn) return;
-      const add=mode==='risk'?Math.max(1, tn.risk_score||0):1;
+      const nw=riskWeights.nodeType[tn.node_type]??1;
+      const ew=riskWeights.edgeType[l.edge_type]??0;
+      const addRisk=Math.max(1, (tn.risk_score||0) * nw + ew);
+      const add=mode==='risk'?addRisk:1;
       const cand=cur+add;
       if(cand>score.get(t)){
         score.set(t, cand);
@@ -606,7 +665,8 @@ function highlightPath(mode, startRaw='', endRaw=''){
     start:startId||null,
     end:endId||end,
     nodes:pathOrder.map(id=>nodeById.get(id)?.label||id),
-    node_ids:pathOrder
+    node_ids:pathOrder,
+    edge_keys:[...pathEdges]
   };
   addPathLog(entry);
 }
@@ -620,9 +680,28 @@ function renderPathLog(){
   const el=document.getElementById('graph-log');
   if(!el) return;
   const head=`<div class="ttl">PATH LOG</div>
-    <div style="display:flex;gap:6px;margin-bottom:6px">
-      <button class="btn" onclick="exportPathLog()">Export</button>
+    <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+      <button class="btn" onclick="exportPathLog()">Export JSON</button>
+      <button class="btn" onclick="exportPathReport()">Report HTML</button>
       <button class="btn" onclick="clearPathLog()">Clear</button>
+    </div>`;
+  const options=graphPathLog.map((p,i)=>{
+    const t=new Date(p.time).toLocaleTimeString();
+    const label=`${i+1} | ${t} | ${p.mode}`;
+    return `<option value="${i}" ${graphCompare.a===i?'selected':''}>${label}</option>`;
+  }).join('');
+  const optionsB=graphPathLog.map((p,i)=>{
+    const t=new Date(p.time).toLocaleTimeString();
+    const label=`${i+1} | ${t} | ${p.mode}`;
+    return `<option value="${i}" ${graphCompare.b===i?'selected':''}>${label}</option>`;
+  }).join('');
+  const compare=`<div class="row">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <select id="cmp-a">${options}</select>
+        <select id="cmp-b">${optionsB}</select>
+        <button class="btn" onclick="comparePaths()">Compare</button>
+      </div>
+      <div id="cmp-out" style="margin-top:6px;color:var(--t3)">${graphCompare.summary||''}</div>
     </div>`;
   if(!graphPathLog.length){
     el.innerHTML=head+`<div class="row">No paths yet.</div>`;
@@ -638,7 +717,7 @@ function renderPathLog(){
       <div style="color:var(--a)">${start} -> ${end}</div>
     </div>`;
   }).join('');
-  el.innerHTML=head+rows;
+  el.innerHTML=head+compare+rows;
 }
 function exportPathLog(){
   const blob=new Blob([JSON.stringify(graphPathLog,null,2)], {type:'application/json'});
@@ -655,6 +734,99 @@ function exportPathLog(){
 function clearPathLog(){
   graphPathLog.length=0;
   renderPathLog();
+}
+function comparePaths(){
+  if(graphPathLog.length<2){
+    graphCompare.summary='Need at least 2 paths.';
+    renderPathLog();
+    return;
+  }
+  const aIdx=parseInt(document.getElementById('cmp-a')?.value||'0',10);
+  const bIdx=parseInt(document.getElementById('cmp-b')?.value||'0',10);
+  const a=graphPathLog[aIdx];
+  const b=graphPathLog[bIdx];
+  if(!a||!b){
+    graphCompare.summary='Invalid selection.';
+    renderPathLog();
+    return;
+  }
+  const aNodes=new Set(a.node_ids||[]);
+  const bNodes=new Set(b.node_ids||[]);
+  const common=[...aNodes].filter(x=>bNodes.has(x));
+  const onlyA=[...aNodes].filter(x=>!bNodes.has(x));
+  const onlyB=[...bNodes].filter(x=>!aNodes.has(x));
+  const aEdges=new Set(a.edge_keys||[]);
+  const bEdges=new Set(b.edge_keys||[]);
+  const commonE=[...aEdges].filter(x=>bEdges.has(x));
+  const onlyAE=[...aEdges].filter(x=>!bEdges.has(x));
+  const onlyBE=[...bEdges].filter(x=>!aEdges.has(x));
+  const labelOf=(id)=>esc(graphView?.nodeById?.get(id)?.label||id);
+  const list=(arr)=>{
+    const shown=arr.slice(0,6).map(labelOf).join(', ');
+    return arr.length>6?`${shown} ... (+${arr.length-6})`:shown||'-';
+  };
+  graphCompare.a=aIdx;
+  graphCompare.b=bIdx;
+  graphCompare.summary=
+    `Common nodes: ${common.length} | A-only: ${onlyA.length} | B-only: ${onlyB.length}<br>`+
+    `A-only nodes: ${list(onlyA)}<br>`+
+    `B-only nodes: ${list(onlyB)}<br>`+
+    `Common edges: ${commonE.length} | A-only: ${onlyAE.length} | B-only: ${onlyBE.length}`;
+  renderPathLog();
+}
+function exportPathReport(){
+  const title=`Attack Path Report`;
+  const rows=graphPathLog.map((p,i)=>{
+    const t=new Date(p.time).toLocaleString();
+    const start=esc(p.nodes[0]||'-');
+    const end=esc(p.nodes[p.nodes.length-1]||'-');
+    return `<tr>
+      <td>${i+1}</td><td>${t}</td><td>${p.mode}</td>
+      <td>${p.nodes.length}</td><td>${p.score}</td>
+      <td>${start}</td><td>${end}</td>
+    </tr>`;
+  }).join('');
+  const details=graphPathLog.map((p,i)=>{
+    const chain=p.nodes.map(n=>esc(n)).join(' -> ');
+    return `<h3>Path #${i+1}</h3><div class="meta">${p.mode} | score ${p.score}</div><div style="font-family:monospace;font-size:12px">${chain}</div>`;
+  }).join('');
+  const compareHtml=graphCompare.summary?`<h3>Compare Summary</h3><p>${graphCompare.summary}</p>`:'';
+  const weightHtml=`<h2>Weights</h2><pre>${esc(JSON.stringify(riskWeights,null,2))}</pre>`;
+  const html=`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>${title}</title>
+<style>
+body{font-family:Arial, sans-serif;margin:24px;color:#111}
+h1{font-size:20px;margin:0 0 8px}
+h2{font-size:14px;margin:16px 0 6px}
+h3{font-size:12px;margin:14px 0 6px}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{border:1px solid #ddd;padding:6px;text-align:left}
+th{background:#f5f5f5}
+.meta{font-size:12px;color:#555}
+</style></head>
+<body>
+  <h1>${title}</h1>
+  <div class="meta">Session: ${esc(selectedSession?.name||'-')} | Generated: ${new Date().toLocaleString()}</div>
+  ${compareHtml}
+  ${weightHtml}
+  <h2>Path Log</h2>
+  <table>
+    <thead><tr><th>#</th><th>Time</th><th>Mode</th><th>Nodes</th><th>Score</th><th>Start</th><th>End</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <h2>Details</h2>
+  ${details}
+</body></html>`;
+  const blob=new Blob([html], {type:'text/html'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const ts=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+  a.href=url;
+  a.download=`attack-path-report-${ts}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function nodeColor(type){
@@ -1075,7 +1247,7 @@ const SAMPLE_DATA={
 };
 
 // ── Init ──
-(async()=>{await refresh();render();})();
+(async()=>{loadRiskWeights();await refresh();render();})();
 </script>
 </body>
 </html>
