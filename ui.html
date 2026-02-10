@@ -77,6 +77,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
 #graph-svg .node.fade{opacity:.12}
 #graph-svg .node.path circle{stroke:#22c55e;stroke-width:2}
 #graph-svg .link.path{stroke:#22c55e;stroke-width:2;stroke-opacity:.9}
+#graph-svg .edge-label{font:700 8px var(--mono);fill:var(--t2);pointer-events:none}
+#graph-svg .edge-label.path{fill:#22c55e}
 #graph-svg .lane{stroke:var(--bd);stroke-dasharray:3 6}
 #graph-svg .lane-label{font:700 8px var(--mono);fill:var(--t3);letter-spacing:.12em;text-transform:uppercase}
 .graph-wrap{flex:1;position:relative;min-height:0}
@@ -87,11 +89,17 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
 .graph-tools .graph-toggle{display:flex;align-items:center;gap:4px}
 .graph-tools .graph-risk{display:flex;align-items:center;gap:6px}
 .graph-tools .graph-risk input[type="range"]{width:80px}
+.graph-tools input[list],.graph-tools input[type="text"]{width:140px;background:var(--bg);color:var(--t2);border:1px solid var(--bd2);border-radius:4px;padding:2px 6px;font:600 9px var(--mono)}
 .graph-tools input[type="checkbox"]{accent-color:var(--a)}
 .graph-tools .dot{display:inline-block;width:6px;height:6px;border-radius:50%}
 .graph-tools .graph-hint{color:var(--t3)}
 .graph-tools .graph-btn{cursor:pointer}
 .graph-tools select{background:var(--bg);color:var(--t2);border:none;font:600 9px var(--mono)}
+.graph-log{position:absolute;left:8px;bottom:8px;width:260px;background:var(--p);border:1px solid var(--bd);border-radius:8px;padding:10px;font:400 9px var(--mono);color:var(--t2);max-height:35vh;overflow:auto;z-index:5}
+.graph-log .ttl{font:700 8px var(--mono);color:var(--t3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px}
+.graph-log .row{margin-bottom:6px;padding-bottom:6px;border-bottom:1px dashed var(--bd2)}
+.graph-log .row:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.graph-log .btn{padding:2px 6px;border-radius:4px;border:1px solid var(--bd2);background:transparent;color:var(--t2);font:600 8px var(--mono);cursor:pointer}
 /* Misc */
 .empty{text-align:center;padding:50px;color:var(--t3);font:400 11px var(--mono)}
 .empty .big{font-size:36px;margin-bottom:10px;opacity:.3}
@@ -123,6 +131,7 @@ const LANE_ORDER=['domain','subdomain','ip','port','url','path'];
 let graphFilters={types:new Set(LANE_ORDER),minRisk:0,focus:null};
 let graphLayout={ranksep:70,nodesep:18,ranker:'network-simplex'};
 let graphView=null;
+let graphPathLog=[];
 
 const PAGES=[
   {id:'dashboard',ic:'◈',label:'Dashboard'},
@@ -338,6 +347,9 @@ function renderGraphFlow(c){
     </div>`;
     return;
   }
+  const nodeOptions=graphData.nodes.map(n=>
+    `<option value="${esc(n.node_id)}" label="${esc(n.label)} (${n.node_type})"></option>`
+  ).join('');
   c.innerHTML=`<div class="graph-wrap" style="height:calc(100vh - 100px);position:relative">
     <svg id="graph-svg"></svg>
     <div class="graph-panel" id="node-panel">
@@ -378,13 +390,32 @@ function renderGraphFlow(c){
           ).join('')}
         </select>
       </label>
+      <label class="tag graph-risk">
+        <span>START</span>
+        <input id="path-start" list="graph-node-list" placeholder="node_id or label">
+      </label>
+      <label class="tag graph-risk">
+        <span>END</span>
+        <input id="path-end" list="graph-node-list" placeholder="node_id or label">
+      </label>
+      <label class="tag graph-risk">
+        <span>MODE</span>
+        <select id="path-mode">
+          <option value="longest">longest</option>
+          <option value="risk">high-risk</option>
+        </select>
+      </label>
+      <button class="tag graph-btn" onclick="findPathFromInputs()">Find Path</button>
       <button class="tag graph-btn" onclick="highlightPath('longest')">Longest Path</button>
       <button class="tag graph-btn" onclick="highlightPath('risk')">High Risk Path</button>
       <button class="tag graph-btn" onclick="clearGraphHighlights()">Clear Highlight</button>
       <span id="path-info" class="tag graph-hint">Path: -</span>
       <span class="tag graph-hint">Click node to trace flow</span>
     </div>
+    <datalist id="graph-node-list">${nodeOptions}</datalist>
+    <div class="graph-log" id="graph-log"></div>
   </div>`;
+  renderPathLog();
   setTimeout(()=>initD3Graph(),50);
 }
 
@@ -409,6 +440,25 @@ function setRanker(v){
   graphLayout.ranker=v;
   initD3Graph();
 }
+function setPathEndpoint(which, id){
+  const input=document.getElementById(which==='start'?'path-start':'path-end');
+  if(input) input.value=id;
+}
+function resolveNodeId(raw){
+  if(!raw||!graphView) return null;
+  const v=raw.trim();
+  if(graphView.nodeById.has(v)) return v;
+  const key=v.toLowerCase();
+  const list=graphView.labelIndex.get(key);
+  if(list&&list.length===1) return list[0];
+  return null;
+}
+function findPathFromInputs(){
+  const mode=document.getElementById('path-mode')?.value||'longest';
+  const startRaw=document.getElementById('path-start')?.value||'';
+  const endRaw=document.getElementById('path-end')?.value||'';
+  highlightPath(mode, startRaw, endRaw);
+}
 function edgeColor(type){
   return{
     has_subdomain:'#06b6d4',
@@ -432,13 +482,28 @@ function clearGraphHighlights(){
   graphView.nodeSel.classed('fade',false).classed('path',false);
   graphView.linkSel.classed('fade',false).classed('path',false)
     .classed('up',false).classed('down',false);
+  if(graphView.labelSel) graphView.labelSel.attr('opacity',0).classed('path',false);
   const info=document.getElementById('path-info');
   if(info) info.textContent='Path: -';
 }
 
-function highlightPath(mode){
+function highlightPath(mode, startRaw='', endRaw=''){
   if(!graphView) return;
   const {nodes, links, nodeById, orderValue} = graphView;
+  const startId=startRaw?resolveNodeId(startRaw):null;
+  const endId=endRaw?resolveNodeId(endRaw):null;
+  if(startRaw && !startId){
+    clearGraphHighlights();
+    const info=document.getElementById('path-info');
+    if(info) info.textContent='Path: start not found';
+    return;
+  }
+  if(endRaw && !endId){
+    clearGraphHighlights();
+    const info=document.getElementById('path-info');
+    if(info) info.textContent='Path: end not found';
+    return;
+  }
   const adj=new Map();
   nodes.forEach(n=>adj.set(n.id, []));
   links.forEach(l=>{
@@ -456,11 +521,22 @@ function highlightPath(mode){
   const prev=new Map();
   ordered.forEach(n=>{
     const base=mode==='risk'?Math.max(1, n.risk_score||0):1;
-    score.set(n.id, base);
+    score.set(n.id, startId? -Infinity : base);
     prev.set(n.id, null);
   });
+  if(startId){
+    const sNode=nodeById.get(startId);
+    if(!sNode){
+      clearGraphHighlights();
+      const info=document.getElementById('path-info');
+      if(info) info.textContent='Path: start not in view';
+      return;
+    }
+    score.set(startId, mode==='risk'?Math.max(1, sNode.risk_score||0):1);
+  }
   ordered.forEach(n=>{
     const cur=score.get(n.id);
+    if(cur===-Infinity) return;
     const out=adj.get(n.id)||[];
     out.forEach(l=>{
       const t=l._tid;
@@ -477,32 +553,108 @@ function highlightPath(mode){
 
   let end=null;
   let best=-Infinity;
-  for(const [id, sc] of score.entries()){
-    if(sc>best){best=sc; end=id;}
+  if(endId){
+    end=endId;
+    best=score.get(endId);
+    if(best===-Infinity){
+      clearGraphHighlights();
+      const info=document.getElementById('path-info');
+      if(info) info.textContent='Path: no route found';
+      return;
+    }
+  }else{
+    for(const [id, sc] of score.entries()){
+      if(sc>best){best=sc; end=id;}
+    }
   }
   if(!end) return;
 
   const pathNodes=new Set();
   const pathEdges=new Set();
+  const pathOrder=[];
   let cur=end;
   while(cur){
     pathNodes.add(cur);
     const p=prev.get(cur);
     if(!p) break;
     pathEdges.add(p.edge);
+    pathOrder.push(cur);
     cur=p.from;
   }
+  pathOrder.push(cur);
+  pathOrder.reverse();
 
   clearGraphHighlights();
   graphFilters.path={nodes:pathNodes, edges:pathEdges, score:best, mode};
   graphView.nodeSel.classed('fade',n=>!pathNodes.has(n.id)).classed('path',n=>pathNodes.has(n.id));
   graphView.linkSel.classed('fade',l=>!pathEdges.has(l._key)).classed('path',l=>pathEdges.has(l._key));
+  if(graphView.labelSel){
+    graphView.labelSel.attr('opacity',l=>pathEdges.has(l._key)?1:0)
+      .classed('path',l=>pathEdges.has(l._key));
+  }
 
   const info=document.getElementById('path-info');
   if(info){
     const label=mode==='risk'?'High Risk':'Longest';
     info.textContent=`Path: ${label} (${pathNodes.size} nodes)`;
   }
+
+  const entry={
+    time:new Date().toISOString(),
+    mode:mode==='risk'?'high-risk':'longest',
+    score:best,
+    start:startId||null,
+    end:endId||end,
+    nodes:pathOrder.map(id=>nodeById.get(id)?.label||id),
+    node_ids:pathOrder
+  };
+  addPathLog(entry);
+}
+
+function addPathLog(entry){
+  graphPathLog.unshift(entry);
+  if(graphPathLog.length>50) graphPathLog.pop();
+  renderPathLog();
+}
+function renderPathLog(){
+  const el=document.getElementById('graph-log');
+  if(!el) return;
+  const head=`<div class="ttl">PATH LOG</div>
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <button class="btn" onclick="exportPathLog()">Export</button>
+      <button class="btn" onclick="clearPathLog()">Clear</button>
+    </div>`;
+  if(!graphPathLog.length){
+    el.innerHTML=head+`<div class="row">No paths yet.</div>`;
+    return;
+  }
+  const rows=graphPathLog.map(p=>{
+    const start=esc(p.nodes[0]||'-');
+    const end=esc(p.nodes[p.nodes.length-1]||'-');
+    const t=new Date(p.time).toLocaleTimeString();
+    return `<div class="row">
+      <div style="color:var(--t3)">${t} | ${p.mode}</div>
+      <div style="color:var(--t)">Nodes: ${p.nodes.length} | Score: ${p.score}</div>
+      <div style="color:var(--a)">${start} -> ${end}</div>
+    </div>`;
+  }).join('');
+  el.innerHTML=head+rows;
+}
+function exportPathLog(){
+  const blob=new Blob([JSON.stringify(graphPathLog,null,2)], {type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const ts=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+  a.href=url;
+  a.download=`path-log-${ts}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function clearPathLog(){
+  graphPathLog.length=0;
+  renderPathLog();
 }
 
 function nodeColor(type){
@@ -584,6 +736,12 @@ function initD3Graph(){
   dagre.layout(dg);
 
   const nodesById=new Map(nodes.map(n=>[n.id,n]));
+  const labelIndex=new Map();
+  nodes.forEach(n=>{
+    const key=String(n.label||'').toLowerCase();
+    if(!labelIndex.has(key)) labelIndex.set(key, []);
+    labelIndex.get(key).push(n.id);
+  });
   nodes.forEach(n=>{
     const dn=dg.node(n.id);
     n.x=dn.x; n.y=dn.y;
@@ -622,6 +780,20 @@ function initD3Graph(){
     .attr('stroke-dasharray',d=>edgeDash(d.edge_type))
     .attr('marker-end','url(#arrow)')
     .style('color',d=>edgeColor(d.edge_type));
+
+  function edgeMid(d){
+    const pts=d._points||[];
+    if(!pts.length) return {x:0,y:0};
+    const m=pts[Math.floor(pts.length/2)];
+    return {x:m.x,y:m.y};
+  }
+  const linkLabel=g.append('g').selectAll('text').data(links).join('text')
+    .attr('class','edge-label')
+    .attr('x',d=>edgeMid(d).x)
+    .attr('y',d=>edgeMid(d).y-4)
+    .attr('text-anchor','middle')
+    .attr('opacity',0)
+    .text(d=>d.label||d.edge_type||'');
 
   const node=g.append('g').selectAll('g').data(nodes).join('g')
     .attr('class','node')
@@ -680,8 +852,10 @@ function initD3Graph(){
     nodes,
     links,
     nodeById:nodesById,
+    labelIndex,
     nodeSel:node,
     linkSel:link,
+    labelSel:linkLabel,
     out,
     inc,
     orderValue
@@ -742,6 +916,10 @@ function showNodePanel(d){
       ${d.node_type==='path'?'<button class="tag" style="cursor:pointer;border-color:var(--r);color:var(--r)">Fuzz</button>':''}
       ${d.node_type==='port'?'<button class="tag" style="cursor:pointer;border-color:var(--o);color:var(--o)">Service Scan</button>':''}
       ${d.node_type==='url'?'<button class="tag" style="cursor:pointer;border-color:var(--y);color:var(--y)">Header Check</button>':''}
+      <button class="tag" style="cursor:pointer;border-color:var(--g);color:var(--g)"
+        onclick="setPathEndpoint('start',${JSON.stringify(d.id).replace(/\"/g,'&quot;')})">Set Start</button>
+      <button class="tag" style="cursor:pointer;border-color:var(--a);color:var(--a)"
+        onclick="setPathEndpoint('end',${JSON.stringify(d.id).replace(/\"/g,'&quot;')})">Set End</button>
       <button class="tag" style="cursor:pointer" onclick="openFindingModal(0,${JSON.stringify(d.label).replace(/"/g,'&quot;')})">+ Finding</button>
     </div>`;
 }
