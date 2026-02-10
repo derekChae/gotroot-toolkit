@@ -75,6 +75,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
 #graph-svg .link.up{stroke:#38bdf8;stroke-opacity:.9;stroke-width:1.6}
 #graph-svg .link.down{stroke:#f97316;stroke-opacity:.9;stroke-width:1.6}
 #graph-svg .node.fade{opacity:.12}
+#graph-svg .node.path circle{stroke:#22c55e;stroke-width:2}
+#graph-svg .link.path{stroke:#22c55e;stroke-width:2;stroke-opacity:.9}
 #graph-svg .lane{stroke:var(--bd);stroke-dasharray:3 6}
 #graph-svg .lane-label{font:700 8px var(--mono);fill:var(--t3);letter-spacing:.12em;text-transform:uppercase}
 .graph-wrap{flex:1;position:relative;min-height:0}
@@ -88,6 +90,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
 .graph-tools input[type="checkbox"]{accent-color:var(--a)}
 .graph-tools .dot{display:inline-block;width:6px;height:6px;border-radius:50%}
 .graph-tools .graph-hint{color:var(--t3)}
+.graph-tools .graph-btn{cursor:pointer}
+.graph-tools select{background:var(--bg);color:var(--t2);border:none;font:600 9px var(--mono)}
 /* Misc */
 .empty{text-align:center;padding:50px;color:var(--t3);font:400 11px var(--mono)}
 .empty .big{font-size:36px;margin-bottom:10px;opacity:.3}
@@ -117,6 +121,8 @@ const API='';
 let page='dashboard', sessions=[], modal=null, selectedSession=null, graphData=null, selectedNode=null;
 const LANE_ORDER=['domain','subdomain','ip','port','url','path'];
 let graphFilters={types:new Set(LANE_ORDER),minRisk:0,focus:null};
+let graphLayout={ranksep:70,nodesep:18,ranker:'network-simplex'};
+let graphView=null;
 
 const PAGES=[
   {id:'dashboard',ic:'◈',label:'Dashboard'},
@@ -352,6 +358,30 @@ function renderGraphFlow(c){
                oninput="setMinRisk(this.value)">
         <span id="risk-min-val">${graphFilters.minRisk}</span>
       </label>
+      <label class="tag graph-risk">
+        <span>RANK</span>
+        <input id="rank-sep" type="range" min="40" max="160" value="${graphLayout.ranksep}"
+               oninput="setLayoutSep('ranksep',this.value)">
+        <span id="rank-sep-val">${graphLayout.ranksep}</span>
+      </label>
+      <label class="tag graph-risk">
+        <span>NODE</span>
+        <input id="node-sep" type="range" min="10" max="80" value="${graphLayout.nodesep}"
+               oninput="setLayoutSep('nodesep',this.value)">
+        <span id="node-sep-val">${graphLayout.nodesep}</span>
+      </label>
+      <label class="tag graph-risk">
+        <span>RANKER</span>
+        <select onchange="setRanker(this.value)">
+          ${['network-simplex','tight-tree','longest-path'].map(r=>
+            `<option value="${r}" ${graphLayout.ranker===r?'selected':''}>${r}</option>`
+          ).join('')}
+        </select>
+      </label>
+      <button class="tag graph-btn" onclick="highlightPath('longest')">Longest Path</button>
+      <button class="tag graph-btn" onclick="highlightPath('risk')">High Risk Path</button>
+      <button class="tag graph-btn" onclick="clearGraphHighlights()">Clear Highlight</button>
+      <span id="path-info" class="tag graph-hint">Path: -</span>
       <span class="tag graph-hint">Click node to trace flow</span>
     </div>
   </div>`;
@@ -368,6 +398,17 @@ function setMinRisk(v){
   if(el) el.textContent=graphFilters.minRisk;
   initD3Graph();
 }
+function setLayoutSep(kind, v){
+  const val=parseInt(v,10);
+  if(Number.isFinite(val)) graphLayout[kind]=val;
+  const el=document.getElementById(kind==='ranksep'?'rank-sep-val':'node-sep-val');
+  if(el) el.textContent=graphLayout[kind];
+  initD3Graph();
+}
+function setRanker(v){
+  graphLayout.ranker=v;
+  initD3Graph();
+}
 function edgeColor(type){
   return{
     has_subdomain:'#06b6d4',
@@ -382,6 +423,86 @@ function edgeDash(type){
   if(type==='resolves_to') return '4,3';
   if(type==='redirects_to') return '2,2';
   return 'none';
+}
+
+function clearGraphHighlights(){
+  if(!graphView) return;
+  graphFilters.focus=null;
+  graphFilters.path=null;
+  graphView.nodeSel.classed('fade',false).classed('path',false);
+  graphView.linkSel.classed('fade',false).classed('path',false)
+    .classed('up',false).classed('down',false);
+  const info=document.getElementById('path-info');
+  if(info) info.textContent='Path: -';
+}
+
+function highlightPath(mode){
+  if(!graphView) return;
+  const {nodes, links, nodeById, orderValue} = graphView;
+  const adj=new Map();
+  nodes.forEach(n=>adj.set(n.id, []));
+  links.forEach(l=>{
+    const s=nodeById.get(l._sid);
+    const t=nodeById.get(l._tid);
+    if(!s||!t) return;
+    const os=orderValue(s);
+    const ot=orderValue(t);
+    if(os>=ot) return;
+    adj.get(s.id).push(l);
+  });
+
+  const ordered=[...nodes].sort((a,b)=>orderValue(a)-orderValue(b));
+  const score=new Map();
+  const prev=new Map();
+  ordered.forEach(n=>{
+    const base=mode==='risk'?Math.max(1, n.risk_score||0):1;
+    score.set(n.id, base);
+    prev.set(n.id, null);
+  });
+  ordered.forEach(n=>{
+    const cur=score.get(n.id);
+    const out=adj.get(n.id)||[];
+    out.forEach(l=>{
+      const t=l._tid;
+      const tn=nodeById.get(t);
+      if(!tn) return;
+      const add=mode==='risk'?Math.max(1, tn.risk_score||0):1;
+      const cand=cur+add;
+      if(cand>score.get(t)){
+        score.set(t, cand);
+        prev.set(t, {from:n.id, edge:l._key});
+      }
+    });
+  });
+
+  let end=null;
+  let best=-Infinity;
+  for(const [id, sc] of score.entries()){
+    if(sc>best){best=sc; end=id;}
+  }
+  if(!end) return;
+
+  const pathNodes=new Set();
+  const pathEdges=new Set();
+  let cur=end;
+  while(cur){
+    pathNodes.add(cur);
+    const p=prev.get(cur);
+    if(!p) break;
+    pathEdges.add(p.edge);
+    cur=p.from;
+  }
+
+  clearGraphHighlights();
+  graphFilters.path={nodes:pathNodes, edges:pathEdges, score:best, mode};
+  graphView.nodeSel.classed('fade',n=>!pathNodes.has(n.id)).classed('path',n=>pathNodes.has(n.id));
+  graphView.linkSel.classed('fade',l=>!pathEdges.has(l._key)).classed('path',l=>pathEdges.has(l._key));
+
+  const info=document.getElementById('path-info');
+  if(info){
+    const label=mode==='risk'?'High Risk':'Longest';
+    info.textContent=`Path: ${label} (${pathNodes.size} nodes)`;
+  }
 }
 
 function nodeColor(type){
@@ -408,6 +529,7 @@ function initD3Graph(){
     .map(l=>({...l}));
 
   if(!nodes.length){
+    graphView=null;
     svg.append('text')
       .attr('x',W/2).attr('y',H/2).attr('text-anchor','middle')
       .attr('fill','var(--t3)').style('font','600 10px var(--mono)')
@@ -433,7 +555,14 @@ function initD3Graph(){
   svg.call(zoom);
 
   const dg=new dagre.graphlib.Graph({multigraph:true});
-  dg.setGraph({rankdir:'LR', nodesep:18, ranksep:70, marginx:30, marginy:20});
+  dg.setGraph({
+    rankdir:'LR',
+    nodesep:graphLayout.nodesep,
+    ranksep:graphLayout.ranksep,
+    ranker:graphLayout.ranker,
+    marginx:30,
+    marginy:20
+  });
   dg.setDefaultEdgeLabel(()=>({}));
 
   nodes.forEach(n=>{
@@ -541,13 +670,25 @@ function initD3Graph(){
     return {nodes:nodesSet, edges:edgesSet};
   }
 
-  function clearFocus(){
-    graphFilters.focus=null;
-    node.classed('fade',false);
-    link.classed('fade',false).classed('up',false).classed('down',false);
-  }
+  const orderValue = (n)=>{
+    const idx=LANE_ORDER.indexOf(n.node_type);
+    const base=idx<0?0:idx*100000;
+    return base + Math.round(n.x||0);
+  };
+
+  graphView={
+    nodes,
+    links,
+    nodeById:nodesById,
+    nodeSel:node,
+    linkSel:link,
+    out,
+    inc,
+    orderValue
+  };
 
   function focusNode(d){
+    clearGraphHighlights();
     const up=walk(d.id, inc);
     const down=walk(d.id, out);
     graphFilters.focus=d.id;
@@ -557,7 +698,7 @@ function initD3Graph(){
     link.classed('down',l=>down.edges.has(l._key));
   }
 
-  svg.on('click',()=>clearFocus());
+  svg.on('click',()=>clearGraphHighlights());
 
   node.on('click',(e,d)=>{
     e.stopPropagation();
