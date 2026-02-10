@@ -143,6 +143,7 @@ const PAGES=[
   {id:'dashboard',ic:'◈',label:'Dashboard'},
   {id:'sessions',ic:'◫',label:'Sessions'},
   {id:'import',ic:'↑',label:'Import'},
+  {id:'scan',ic:'S',label:'Scan'},
   {id:'graph',ic:'⬡',label:'Graph'},
   {id:'targets',ic:'◎',label:'Targets'},
   {id:'findings',ic:'⚠',label:'Findings'},
@@ -191,6 +192,7 @@ function renderCnt(){
   if(page==='dashboard') renderDashboard(c);
   else if(page==='sessions') renderSessions(c);
   else if(page==='import') renderImport(c);
+  else if(page==='scan') renderScan(c);
   else if(page==='graph') renderGraphFlow(c);
   else if(page==='targets') renderTargets(c);
   else if(page==='findings') renderFindings(c);
@@ -318,6 +320,93 @@ async function doImport(){
     </div>`;
   await refresh();renderNav();
 }
+
+// Live Scan
+function renderScan(c){
+  const defaultPorts="80,443,8080,8443,22,21,25,110,143,3306,5432,6379,9200,27017";
+  const defaultPaths="/admin
+/login
+/.git
+/.env
+/wp-admin
+/server-status
+/api
+/debug";
+  c.innerHTML=`
+    <div class="card"><div class="card-t">LIVE SCAN</div>
+      <p style="font:400 10px var(--mono);color:var(--t2);margin-bottom:10px">
+        Enter a target URL or domain. The scan will create a new session and build the graph automatically.
+      </p>
+      <label style="display:block;font:600 9px var(--mono);color:var(--t3);margin-bottom:4px">SESSION NAME</label>
+      <input id="scan-name" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font:400 11px var(--mono);margin-bottom:10px"
+             placeholder="e.g. acme.com Live Scan">
+      <label style="display:block;font:600 9px var(--mono);color:var(--t3);margin-bottom:4px">TARGET URL</label>
+      <input id="scan-url" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font:400 11px var(--mono);margin-bottom:10px"
+             placeholder="https://example.com">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label style="display:block;font:600 9px var(--mono);color:var(--t3);margin-bottom:4px">PORTS (CSV)</label>
+          <input id="scan-ports" value="${defaultPorts}"
+                 style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font:400 11px var(--mono)">
+        </div>
+        <div>
+          <label style="display:block;font:600 9px var(--mono);color:var(--t3);margin-bottom:4px">TIMEOUT (SEC)</label>
+          <input id="scan-timeout" value="3"
+                 style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font:400 11px var(--mono)">
+        </div>
+      </div>
+      <label style="display:block;font:600 9px var(--mono);color:var(--t3);margin:10px 0 4px">DIR PATHS (ONE PER LINE)</label>
+      <textarea id="scan-paths" style="width:100%;min-height:120px;padding:10px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font:400 10px var(--mono);resize:vertical">${defaultPaths}</textarea>
+      <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+        <label class="tag" style="cursor:pointer"><input id="scan-port-scan" type="checkbox" checked> Port Scan</label>
+        <label class="tag" style="cursor:pointer"><input id="scan-http" type="checkbox" checked> HTTP Probe</label>
+        <label class="tag" style="cursor:pointer"><input id="scan-dir" type="checkbox" checked> Dir Check</label>
+        <span style="flex:1"></span>
+        <button onclick="startScan()" style="padding:7px 18px;border-radius:6px;border:none;background:var(--a);color:#fff;font:700 11px var(--mono);cursor:pointer">START SCAN</button>
+      </div>
+    </div>
+    <div id="scan-result"></div>`;
+}
+
+async function startScan(){
+  const name=$('#scan-name').value||'Live Scan '+new Date().toLocaleString();
+  const target=$('#scan-url').value.trim();
+  if(!target){alert('Target URL required');return;}
+  const ports=$('#scan-ports').value;
+  const paths=$('#scan-paths').value;
+  const timeout=parseFloat($('#scan-timeout').value)||3;
+  const opts={
+    port_scan:$('#scan-port-scan').checked,
+    http_probe:$('#scan-http').checked,
+    dir_scan:$('#scan-dir').checked,
+    ports, paths, timeout
+  };
+  try{
+    const res=await POST('/api/scan',{session_name:name,target_url:target,options:opts});
+    if(res?.detail) throw new Error(res.detail);
+    document.getElementById('scan-result').innerHTML=`
+      <div class="card" style="border-color:var(--g)">
+        <div style="font:700 12px var(--sans);color:var(--g);margin-bottom:6px">Scan Complete</div>
+        <div style="font:400 10px var(--mono);color:var(--t2)">
+          Session ID: ${res.session_id} | Targets: ${res.targets_imported}
+          | IPs: ${res.summary?.ips||0} | Ports: ${res.summary?.ports||0}
+          | Alive: ${res.summary?.alive||0} | Paths: ${res.summary?.paths||0}
+        </div>
+        <button onclick="selectSession(${res.session_id}).then(()=>go('graph'))"
+                style="margin-top:8px;padding:6px 14px;border-radius:6px;border:none;background:var(--a);color:#fff;font:600 10px var(--mono);cursor:pointer">
+          View Graph
+        </button>
+      </div>`;
+    await refresh();renderNav();
+  }catch(e){
+    document.getElementById('scan-result').innerHTML=`
+      <div class="card" style="border-color:var(--r)">
+        <div style="font:700 12px var(--sans);color:var(--r);margin-bottom:6px">Scan Failed</div>
+        <div style="font:400 10px var(--mono);color:var(--t2)">${esc(e.message||e)}</div>
+      </div>`;
+  }
+}
+
 
 // ── Graph (D3) ──
 function renderGraph(c){
