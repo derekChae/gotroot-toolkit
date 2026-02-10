@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GOTROOT Recon Agent</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#060a12;--p:#0b1120;--p2:#0f1729;--bd:#141e30;--bd2:#1e2d45;--a:#06b6d4;--a1:rgba(6,182,212,0.08);--a2:rgba(6,182,212,0.15);--r:#ef4444;--o:#f97316;--y:#eab308;--g:#10b981;--v:#8b5cf6;--t:#e2e8f0;--t2:#94a3b8;--t3:#475569;--mono:'JetBrains Mono',monospace;--sans:'Outfit',system-ui,sans-serif}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--t);font-family:var(--sans)}
+#app{display:flex;height:100%}
+.side{width:200px;background:var(--p);border-right:1px solid var(--bd);display:flex;flex-direction:column;flex-shrink:0}
+.side-logo{padding:14px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px}
+.side-logo .g{width:28px;height:28px;border-radius:6px;background:linear-gradient(135deg,#ef4444,#f97316);display:flex;align-items:center;justify-content:center;font:900 12px var(--mono);color:#fff}
+.side-logo .txt{font:900 13px var(--mono);color:var(--t)}
+.side-logo .sub{font:700 7px var(--mono);color:var(--t3);letter-spacing:0.15em}
+.side-nav{flex:1;padding:8px 6px;overflow-y:auto}
+.side-nav button{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border-radius:6px;border:none;cursor:pointer;font:500 11px var(--sans);color:var(--t2);background:transparent;text-align:left;transition:all .15s}
+.side-nav button:hover{background:var(--a1);color:var(--t)}
+.side-nav button.active{background:var(--a1);color:var(--a);font-weight:700}
+.side-nav button .ic{font-size:14px;width:18px;text-align:center}
+.side-nav button .badge{margin-left:auto;font:700 8px var(--mono);color:var(--bg);background:var(--a);border-radius:7px;padding:1px 5px}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.hdr{height:42px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 16px;flex-shrink:0;gap:12px}
+.hdr h2{font:700 13px var(--sans);color:var(--t)}
+.hdr .spacer{flex:1}
+.hdr button{padding:5px 12px;border-radius:5px;border:1px solid var(--bd2);background:var(--a1);color:var(--a);font:600 10px var(--mono);cursor:pointer}
+.hdr button:hover{background:var(--a2)}
+.hdr button.primary{background:var(--a);color:#fff;border-color:var(--a)}
+.cnt{flex:1;overflow:auto;padding:16px}
+/* Cards */
+.card{background:var(--p);border:1px solid var(--bd);border-radius:8px;padding:14px;margin-bottom:10px}
+.card-t{font:700 8px var(--mono);color:var(--t3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px}
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:14px}
+.stat{background:var(--p);border:1px solid var(--bd);border-radius:8px;padding:10px;text-align:center}
+.stat .n{font:800 22px var(--mono);line-height:1.2}
+.stat .l{font:700 7px var(--mono);color:var(--t3);letter-spacing:.1em;text-transform:uppercase}
+/* Table */
+.tbl{width:100%;border-collapse:collapse;font:400 11px var(--mono)}
+.tbl th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd2);color:var(--t3);font:600 8px var(--mono);letter-spacing:.1em;text-transform:uppercase}
+.tbl td{padding:7px 10px;border-bottom:1px solid var(--bd);color:var(--t2);vertical-align:top}
+.tbl tr:hover td{background:var(--a1)}
+.tbl .acts{display:flex;gap:4px}
+.tbl .acts button{padding:3px 8px;border-radius:4px;border:1px solid var(--bd2);background:transparent;color:var(--t2);font:500 9px var(--mono);cursor:pointer}
+.tbl .acts button:hover{border-color:var(--a);color:var(--a)}
+.tbl .acts button.del:hover{border-color:var(--r);color:var(--r)}
+/* Severity */
+.sev{display:inline-block;font:700 8px var(--mono);padding:2px 6px;border-radius:3px}
+.sev.CRITICAL{color:var(--r);background:rgba(239,68,68,.12)}
+.sev.HIGH{color:var(--o);background:rgba(249,115,22,.12)}
+.sev.MEDIUM{color:var(--y);background:rgba(234,179,8,.12)}
+.sev.LOW{color:var(--a);background:rgba(6,182,212,.12)}
+.sev.INFO{color:var(--t3);background:rgba(71,85,105,.12)}
+/* Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal{background:var(--p);border:1px solid var(--bd2);border-radius:10px;padding:20px;width:90%;max-width:600px;max-height:80vh;overflow-y:auto}
+.modal h3{font:700 14px var(--sans);margin-bottom:14px;color:var(--t)}
+.modal label{display:block;font:600 9px var(--mono);color:var(--t3);letter-spacing:.1em;text-transform:uppercase;margin:10px 0 4px}
+.modal input,.modal textarea,.modal select{width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font:400 11px var(--mono);outline:none}
+.modal input:focus,.modal textarea:focus{border-color:var(--a)}
+.modal textarea{min-height:80px;resize:vertical}
+.modal .btns{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+.modal .btns button{padding:7px 18px;border-radius:6px;font:600 11px var(--mono);cursor:pointer;border:1px solid var(--bd2);background:transparent;color:var(--t2)}
+.modal .btns button.primary{background:var(--a);color:#fff;border-color:var(--a)}
+.modal .btns button.danger{background:var(--r);color:#fff;border-color:var(--r)}
+/* Graph */
+#graph-svg{width:100%;height:100%;background:var(--bg)}
+#graph-svg .node-label{font:600 9px var(--mono);fill:var(--t2);pointer-events:none}
+#graph-svg .link{stroke:var(--bd2);stroke-width:1.1;stroke-opacity:.55}
+#graph-svg .link.fade{opacity:.08}
+#graph-svg .link.up{stroke:#38bdf8;stroke-opacity:.9;stroke-width:1.6}
+#graph-svg .link.down{stroke:#f97316;stroke-opacity:.9;stroke-width:1.6}
+#graph-svg .node.fade{opacity:.12}
+#graph-svg .lane{stroke:var(--bd);stroke-dasharray:3 6}
+#graph-svg .lane-label{font:700 8px var(--mono);fill:var(--t3);letter-spacing:.12em;text-transform:uppercase}
+.graph-wrap{flex:1;position:relative;min-height:0}
+.graph-panel{position:absolute;right:0;top:0;bottom:0;width:280px;background:var(--p);border-left:1px solid var(--bd);padding:14px;overflow-y:auto;z-index:10;display:none}
+.graph-panel.show{display:block}
+.graph-panel .close{position:absolute;top:8px;right:8px;background:none;border:none;color:var(--t3);font-size:16px;cursor:pointer}
+.graph-tools{position:absolute;top:8px;left:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:5}
+.graph-tools .graph-toggle{display:flex;align-items:center;gap:4px}
+.graph-tools .graph-risk{display:flex;align-items:center;gap:6px}
+.graph-tools .graph-risk input[type="range"]{width:80px}
+.graph-tools input[type="checkbox"]{accent-color:var(--a)}
+.graph-tools .dot{display:inline-block;width:6px;height:6px;border-radius:50%}
+.graph-tools .graph-hint{color:var(--t3)}
+/* Misc */
+.empty{text-align:center;padding:50px;color:var(--t3);font:400 11px var(--mono)}
+.empty .big{font-size:36px;margin-bottom:10px;opacity:.3}
+.tag{display:inline-block;font:600 9px var(--mono);padding:2px 7px;border-radius:4px;margin:2px;background:var(--a1);color:var(--a);border:1px solid var(--a2)}
+.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
+.status-dot.idle{background:var(--t3)}.status-dot.imported{background:var(--g)}.status-dot.recording{background:var(--r);animation:pulse 1.5s infinite}.status-dot.done{background:var(--a)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bd);border-radius:3px}
+.scanline{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.01;background-image:repeating-linear-gradient(0deg,transparent,transparent 1px,rgba(6,182,212,.05) 1px,rgba(6,182,212,.05) 2px);background-size:100% 3px}
+</style>
+</head>
+<body>
+<div class="scanline"></div>
+<div id="app">
+<div class="side">
+  <div class="side-logo"><div class="g">G</div><div><div class="txt">GOTROOT</div><div class="sub">RECON AGENT</div></div></div>
+  <div class="side-nav" id="nav"></div>
+</div>
+<div class="main">
+  <div class="hdr" id="hdr"></div>
+  <div class="cnt" id="cnt"></div>
+</div>
+</div>
+
+<script>
+const API='';
+let page='dashboard', sessions=[], modal=null, selectedSession=null, graphData=null, selectedNode=null;
+const LANE_ORDER=['domain','subdomain','ip','port','url','path'];
+let graphFilters={types:new Set(LANE_ORDER),minRisk:0,focus:null};
+
+const PAGES=[
+  {id:'dashboard',ic:'◈',label:'Dashboard'},
+  {id:'sessions',ic:'◫',label:'Sessions'},
+  {id:'import',ic:'↑',label:'Import'},
+  {id:'graph',ic:'⬡',label:'Graph'},
+  {id:'targets',ic:'◎',label:'Targets'},
+  {id:'findings',ic:'⚠',label:'Findings'},
+  {id:'timeline',ic:'⟐',label:'Timeline'},
+];
+
+// ── Fetch helpers ──
+async function api(path,opts={}){
+  const r=await fetch(API+path,{headers:{'Content-Type':'application/json'},...opts});
+  return r.json();
+}
+const GET=p=>api(p);
+const POST=(p,d)=>api(p,{method:'POST',body:JSON.stringify(d)});
+const PUT=(p,d)=>api(p,{method:'PUT',body:JSON.stringify(d)});
+const DEL=p=>api(p,{method:'DELETE'});
+
+// ── Nav ──
+function renderNav(){
+  const fc=sessions.reduce((a,s)=>a+(s.finding_count||0),0);
+  document.getElementById('nav').innerHTML=PAGES.map(p=>`
+    <button class="${page===p.id?'active':''}" onclick="go('${p.id}')">
+      <span class="ic">${p.ic}</span>${p.label}
+      ${p.id==='findings'&&fc?`<span class="badge">${fc}</span>`:''}
+      ${p.id==='sessions'?`<span class="badge">${sessions.length}</span>`:''}
+    </button>`).join('');
+}
+
+async function go(p){page=p;await refresh();render();}
+async function refresh(){sessions=await GET('/api/sessions');}
+function render(){renderNav();renderHdr();renderCnt();}
+
+// ── Header ──
+function renderHdr(){
+  const pg=PAGES.find(p=>p.id===page);
+  const h=document.getElementById('hdr');
+  let extra='';
+  if(page==='sessions') extra=`<span class="spacer"></span><button class="primary" onclick="openSessionModal()">+ New Session</button>`;
+  if(page==='findings') extra=`<span class="spacer"></span><button class="primary" onclick="openFindingModal()">+ New Finding</button>`;
+  if(page==='graph'&&selectedSession) extra=`<span class="spacer"></span><span style="font:400 10px var(--mono);color:var(--t3)">Session: ${selectedSession.name}</span>`;
+  h.innerHTML=`<h2>${pg?.label||''}</h2>${extra}`;
+}
+
+// ── Content Router ──
+function renderCnt(){
+  const c=document.getElementById('cnt');
+  if(page==='dashboard') renderDashboard(c);
+  else if(page==='sessions') renderSessions(c);
+  else if(page==='import') renderImport(c);
+  else if(page==='graph') renderGraphFlow(c);
+  else if(page==='targets') renderTargets(c);
+  else if(page==='findings') renderFindings(c);
+  else if(page==='timeline') renderTimeline(c);
+}
+
+// ── Dashboard ──
+function renderDashboard(c){
+  const tc=sessions.reduce((a,s)=>a+(s.target_count||0),0);
+  const fc=sessions.reduce((a,s)=>a+(s.finding_count||0),0);
+  c.innerHTML=`
+    <div class="stats">
+      <div class="stat"><div class="n" style="color:var(--t)">${sessions.length}</div><div class="l">Sessions</div></div>
+      <div class="stat"><div class="n" style="color:var(--a)">${tc}</div><div class="l">Targets</div></div>
+      <div class="stat"><div class="n" style="color:var(--o)">${fc}</div><div class="l">Findings</div></div>
+    </div>
+    <div class="card"><div class="card-t">RECENT SESSIONS</div>
+      ${sessions.length?`<table class="tbl"><tr><th>Name</th><th>Target</th><th>Status</th><th>Targets</th><th>Findings</th><th>Updated</th></tr>
+        ${sessions.slice(0,5).map(s=>`<tr style="cursor:pointer" onclick="selSession(${s.id})">
+          <td style="color:var(--t);font-weight:600">${esc(s.name)}</td>
+          <td>${esc(s.target_url)}</td>
+          <td><span class="status-dot ${s.status}"></span>${s.status}</td>
+          <td>${s.target_count}</td><td>${s.finding_count}</td>
+          <td style="color:var(--t3)">${s.updated_at}</td>
+        </tr>`).join('')}</table>`
+      :'<div class="empty"><div class="big">◈</div>No sessions yet. Import recon data to start.</div>'}
+    </div>`;
+}
+
+// ── Sessions CRUD ──
+function renderSessions(c){
+  c.innerHTML=sessions.length?`<table class="tbl">
+    <tr><th>Name</th><th>Target</th><th>Status</th><th>Description</th><th>Targets</th><th>Findings</th><th>Actions</th></tr>
+    ${sessions.map(s=>`<tr>
+      <td style="color:var(--t);font-weight:600">${esc(s.name)}</td>
+      <td><span class="tag">${esc(s.target_url||'-')}</span></td>
+      <td><span class="status-dot ${s.status}"></span>${s.status}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(s.description||'')}</td>
+      <td>${s.target_count}</td><td>${s.finding_count}</td>
+      <td class="acts">
+        <button onclick="selectSession(${s.id}).then(()=>go('graph'))">Graph</button>
+        <button onclick="openSessionModal(${s.id})">Edit</button>
+        <button class="del" onclick="delSession(${s.id})">Del</button>
+      </td>
+    </tr>`).join('')}</table>`
+  :`<div class="empty"><div class="big">◫</div>No sessions. Click "+ New Session" or go to Import.</div>`;
+}
+
+async function openSessionModal(id){
+  let s=id?sessions.find(x=>x.id===id):{name:'',target_url:'',description:''};
+  showModal(`<h3>${id?'Edit':'New'} Session</h3>
+    <label>Name</label><input id="m-name" value="${esc(s.name)}">
+    <label>Target URL</label><input id="m-url" value="${esc(s.target_url)}">
+    <label>Description</label><textarea id="m-desc">${esc(s.description||'')}</textarea>
+    <div class="btns">
+      <button onclick="closeModal()">Cancel</button>
+      <button class="primary" onclick="saveSession(${id||0})">${id?'Update':'Create'}</button>
+    </div>`);
+}
+
+async function saveSession(id){
+  const d={name:$('#m-name').value,target_url:$('#m-url').value,description:$('#m-desc').value};
+  if(id) await PUT(`/api/sessions/${id}`,d); else await POST('/api/sessions',d);
+  closeModal();await refresh();render();
+}
+
+async function delSession(id){
+  if(!confirm('Delete this session and all data?')) return;
+  await DEL(`/api/sessions/${id}`);
+  if(selectedSession?.id===id) selectedSession=null;
+  await refresh();render();
+}
+
+async function selectSession(id){
+  selectedSession=sessions.find(s=>s.id===id)||null;
+  graphData=selectedSession?await GET(`/api/graph/${id}`):null;
+  return true;
+}
+// Sync wrapper for onclick handlers
+function selSession(id){selectSession(id).then(()=>render());}
+
+// ── Import ──
+function renderImport(c){
+  c.innerHTML=`
+    <div class="card"><div class="card-t">IMPORT RECON JSON</div>
+      <p style="font:400 10px var(--mono);color:var(--t2);margin-bottom:10px">
+        Paste recon JSON data below. It will create a new session with targets, graph nodes, and auto-generated findings.
+      </p>
+      <label style="display:block;font:600 9px var(--mono);color:var(--t3);margin-bottom:4px">SESSION NAME</label>
+      <input id="imp-name" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font:400 11px var(--mono);margin-bottom:10px"
+             placeholder="e.g. gotroot.co.kr Recon 2025-02">
+      <label style="display:block;font:600 9px var(--mono);color:var(--t3);margin-bottom:4px">RECON JSON</label>
+      <textarea id="imp-json" style="width:100%;min-height:300px;padding:10px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--a);font:400 10px var(--mono);resize:vertical"
+                placeholder='{"root_domain":"gotroot.co.kr","targets":[...]}'></textarea>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button onclick="loadSample()" style="padding:7px 14px;border-radius:6px;border:1px solid var(--bd2);background:transparent;color:var(--t2);font:600 10px var(--mono);cursor:pointer">Load Sample</button>
+        <span style="flex:1"></span>
+        <button onclick="doImport()" style="padding:7px 18px;border-radius:6px;border:none;background:var(--a);color:#fff;font:700 11px var(--mono);cursor:pointer">IMPORT</button>
+      </div>
+    </div>
+    <div id="imp-result"></div>`;
+}
+
+function loadSample(){
+  document.getElementById('imp-json').value=JSON.stringify(SAMPLE_DATA,null,2);
+  document.getElementById('imp-name').value='gotroot.co.kr Recon';
+}
+
+async function doImport(){
+  const name=$('#imp-name').value||'Import '+new Date().toLocaleString();
+  const raw=$('#imp-json').value;
+  let data;
+  try{data=JSON.parse(raw);}catch(e){alert('Invalid JSON: '+e.message);return;}
+  const res=await POST('/api/import',{session_name:name,recon_data:data});
+  document.getElementById('imp-result').innerHTML=`
+    <div class="card" style="border-color:var(--g)">
+      <div style="font:700 12px var(--sans);color:var(--g);margin-bottom:6px">Import Complete</div>
+      <div style="font:400 10px var(--mono);color:var(--t2)">
+        Session ID: ${res.session_id} | Targets: ${res.targets_imported}
+      </div>
+      <button onclick="selectSession(${res.session_id}).then(()=>go('graph'))"
+              style="margin-top:8px;padding:6px 14px;border-radius:6px;border:none;background:var(--a);color:#fff;font:600 10px var(--mono);cursor:pointer">
+        View Graph →
+      </button>
+    </div>`;
+  await refresh();renderNav();
+}
+
+// ── Graph (D3) ──
+function renderGraph(c){
+  if(!selectedSession||!graphData){
+    c.innerHTML=`<div class="empty"><div class="big">⬡</div>Select a session first.
+      ${sessions.length?`<div style="margin-top:12px">${sessions.map(s=>
+        `<button onclick="selectSession(${s.id}).then(()=>render())" class="tag" style="cursor:pointer;margin:3px">${esc(s.name)}</button>`
+      ).join('')}</div>`:'Import data to create a session.'}
+    </div>`;
+    return;
+  }
+  c.innerHTML=`<div class="graph-wrap" style="height:calc(100vh - 100px);position:relative">
+    <svg id="graph-svg"></svg>
+    <div class="graph-panel" id="node-panel">
+      <button class="close" onclick="document.getElementById('node-panel').classList.remove('show')">&times;</button>
+      <div id="panel-content"></div>
+    </div>
+    <div style="position:absolute;top:8px;left:8px;display:flex;gap:4px;flex-wrap:wrap">
+      ${['domain','subdomain','ip','port','url','path'].map(t=>
+        `<span class="tag" style="font-size:8px"><span style="color:${nodeColor(t)}">●</span> ${t}</span>`
+      ).join('')}
+    </div>
+  </div>`;
+  setTimeout(()=>initD3Graph(),50);
+}
+
+function renderGraphFlow(c){
+  if(!selectedSession||!graphData){
+    c.innerHTML=`<div class="empty"><div class="big">*</div>Select a session first.
+      ${sessions.length?`<div style="margin-top:12px">${sessions.map(s=>
+        `<button onclick="selectSession(${s.id}).then(()=>render())" class="tag" style="cursor:pointer;margin:3px">${esc(s.name)}</button>`
+      ).join('')}</div>`:'Import data to create a session.'}
+    </div>`;
+    return;
+  }
+  c.innerHTML=`<div class="graph-wrap" style="height:calc(100vh - 100px);position:relative">
+    <svg id="graph-svg"></svg>
+    <div class="graph-panel" id="node-panel">
+      <button class="close" onclick="document.getElementById('node-panel').classList.remove('show')">&times;</button>
+      <div id="panel-content"></div>
+    </div>
+    <div class="graph-tools">
+      ${LANE_ORDER.map(t=>`
+        <label class="tag graph-toggle">
+          <input type="checkbox" ${graphFilters.types.has(t)?'checked':''}
+                 onchange="toggleType('${t}',this.checked)">
+          <span class="dot" style="background:${nodeColor(t)}"></span>${t}
+        </label>
+      `).join('')}
+      <label class="tag graph-risk">
+        <span>RISK</span>
+        <input id="risk-min" type="range" min="0" max="100" value="${graphFilters.minRisk}"
+               oninput="setMinRisk(this.value)">
+        <span id="risk-min-val">${graphFilters.minRisk}</span>
+      </label>
+      <span class="tag graph-hint">Click node to trace flow</span>
+    </div>
+  </div>`;
+  setTimeout(()=>initD3Graph(),50);
+}
+
+function toggleType(t,on){
+  if(on) graphFilters.types.add(t); else graphFilters.types.delete(t);
+  initD3Graph();
+}
+function setMinRisk(v){
+  graphFilters.minRisk=parseInt(v,10)||0;
+  const el=document.getElementById('risk-min-val');
+  if(el) el.textContent=graphFilters.minRisk;
+  initD3Graph();
+}
+function edgeColor(type){
+  return{
+    has_subdomain:'#06b6d4',
+    resolves_to:'#8b5cf6',
+    exposes:'#f97316',
+    serves:'#eab308',
+    redirects_to:'#ef4444',
+    contains:'#10b981'
+  }[type]||'#1e2d45';
+}
+function edgeDash(type){
+  if(type==='resolves_to') return '4,3';
+  if(type==='redirects_to') return '2,2';
+  return 'none';
+}
+
+function nodeColor(type){
+  return{domain:'#06b6d4',subdomain:'#10b981',ip:'#8b5cf6',port:'#f97316',url:'#eab308',path:'#ef4444'}[type]||'#94a3b8';
+}
+function nodeRadius(d){return Math.max(6,Math.min(20,6+(d.risk_score||0)/8));}
+
+function initD3Graph(){
+  const svg=d3.select('#graph-svg');
+  const container=document.querySelector('.graph-wrap');
+  if(!container)return;
+  const W=container.clientWidth, H=container.clientHeight;
+  svg.attr('width',W).attr('height',H);
+
+  svg.selectAll('*').remove();
+  const activeLanes=LANE_ORDER.filter(t=>graphFilters.types.has(t));
+  const nodes=graphData.nodes
+    .filter(n=>graphFilters.types.has(n.node_type))
+    .filter(n=>(n.risk_score||0)>=graphFilters.minRisk)
+    .map(n=>({...n,id:n.node_id}));
+  const nodeIds=new Set(nodes.map(n=>n.id));
+  const links=graphData.links
+    .filter(l=>nodeIds.has(l.source)&&nodeIds.has(l.target))
+    .map(l=>({...l}));
+
+  if(!nodes.length){
+    svg.append('text')
+      .attr('x',W/2).attr('y',H/2).attr('text-anchor','middle')
+      .attr('fill','var(--t3)').style('font','600 10px var(--mono)')
+      .text('No nodes match current filters');
+    return;
+  }
+
+  const g=svg.append('g');
+  const defs=svg.append('defs');
+  defs.append('marker')
+    .attr('id','arrow')
+    .attr('viewBox','0 -5 10 10')
+    .attr('refX',10)
+    .attr('refY',0)
+    .attr('markerWidth',6)
+    .attr('markerHeight',6)
+    .attr('orient','auto')
+    .append('path')
+    .attr('d','M0,-5L10,0L0,5')
+    .attr('fill','currentColor');
+
+  const zoom=d3.zoom().scaleExtent([0.2,5]).on('zoom',e=>g.attr('transform',e.transform));
+  svg.call(zoom);
+
+  const dg=new dagre.graphlib.Graph({multigraph:true});
+  dg.setGraph({rankdir:'LR', nodesep:18, ranksep:70, marginx:30, marginy:20});
+  dg.setDefaultEdgeLabel(()=>({}));
+
+  nodes.forEach(n=>{
+    const r=nodeRadius(n);
+    const label=String(n.label||'');
+    const w=Math.max(60, Math.min(240, label.length*6 + 32));
+    const h=Math.max(28, r*2 + 12);
+    n._w=w; n._h=h;
+    dg.setNode(n.id, {width:w, height:h, node_type:n.node_type});
+  });
+
+  links.forEach((l,i)=>{
+    l._sid=l.source;
+    l._tid=l.target;
+    l._key=`${l._sid}|${l._tid}|${l.edge_type||'connects'}|${i}`;
+    dg.setEdge(l._sid, l._tid, {edge_type:l.edge_type, _key:l._key}, l._key);
+  });
+
+  dagre.layout(dg);
+
+  const nodesById=new Map(nodes.map(n=>[n.id,n]));
+  nodes.forEach(n=>{
+    const dn=dg.node(n.id);
+    n.x=dn.x; n.y=dn.y;
+  });
+
+  links.forEach(l=>{
+    const e=dg.edge(l._sid, l._tid, l._key);
+    l._points=(e && e.points)?e.points:[
+      {x:nodesById.get(l._sid).x, y:nodesById.get(l._sid).y},
+      {x:nodesById.get(l._tid).x, y:nodesById.get(l._tid).y}
+    ];
+  });
+
+  const laneXs={};
+  activeLanes.forEach(t=>{
+    const xs=nodes.filter(n=>n.node_type===t).map(n=>n.x);
+    if(xs.length) laneXs[t]=d3.median(xs);
+  });
+  const laneKeys=Object.keys(laneXs);
+  if(laneKeys.length){
+    g.append('g').selectAll('line').data(laneKeys).join('line')
+      .attr('class','lane')
+      .attr('x1',d=>laneXs[d]).attr('x2',d=>laneXs[d])
+      .attr('y1',20).attr('y2',H-20);
+    g.append('g').selectAll('text').data(laneKeys).join('text')
+      .attr('class','lane-label')
+      .attr('x',d=>laneXs[d]).attr('y',14)
+      .attr('text-anchor','middle').text(d=>d);
+  }
+
+  const line=d3.line().x(p=>p.x).y(p=>p.y).curve(d3.curveCatmullRom.alpha(0.6));
+  const link=g.append('g').selectAll('path').data(links).join('path')
+    .attr('class','link')
+    .attr('d',d=>line(d._points))
+    .attr('stroke',d=>edgeColor(d.edge_type))
+    .attr('stroke-dasharray',d=>edgeDash(d.edge_type))
+    .attr('marker-end','url(#arrow)')
+    .style('color',d=>edgeColor(d.edge_type));
+
+  const node=g.append('g').selectAll('g').data(nodes).join('g')
+    .attr('class','node')
+    .style('cursor','pointer')
+    .attr('transform',d=>`translate(${d.x},${d.y})`);
+
+  node.append('circle')
+    .attr('r',d=>nodeRadius(d))
+    .attr('fill',d=>nodeColor(d.node_type))
+    .attr('fill-opacity',.85)
+    .attr('stroke',d=>(d.risk_score||0)>=60?'#ef4444':'none')
+    .attr('stroke-width',2);
+
+  node.filter(d=>(d.risk_score||0)>=70).append('circle')
+    .attr('r',d=>nodeRadius(d)+4).attr('fill','none')
+    .attr('stroke',d=>(d.risk_score||0)>=80?'#ef4444':'#f97316')
+    .attr('stroke-width',1).attr('stroke-opacity',.4)
+    .style('animation','pulse 2s infinite');
+
+  node.append('text').attr('class','node-label').attr('dy',d=>nodeRadius(d)+12).attr('text-anchor','middle')
+    .text(d=>{const l=d.label;return l.length>25?l.substring(0,22)+'...':l;});
+
+  const out=new Map(), inc=new Map();
+  links.forEach(l=>{
+    if(!out.has(l._sid)) out.set(l._sid, []);
+    out.get(l._sid).push({to:l._tid, key:l._key});
+    if(!inc.has(l._tid)) inc.set(l._tid, []);
+    inc.get(l._tid).push({to:l._sid, key:l._key});
+  });
+
+  function walk(start, map){
+    const nodesSet=new Set([start]);
+    const edgesSet=new Set();
+    const q=[start];
+    while(q.length){
+      const cur=q.shift();
+      const nexts=map.get(cur)||[];
+      for(const n of nexts){
+        edgesSet.add(n.key);
+        if(!nodesSet.has(n.to)){
+          nodesSet.add(n.to);
+          q.push(n.to);
+        }
+      }
+    }
+    return {nodes:nodesSet, edges:edgesSet};
+  }
+
+  function clearFocus(){
+    graphFilters.focus=null;
+    node.classed('fade',false);
+    link.classed('fade',false).classed('up',false).classed('down',false);
+  }
+
+  function focusNode(d){
+    const up=walk(d.id, inc);
+    const down=walk(d.id, out);
+    graphFilters.focus=d.id;
+    node.classed('fade',n=>!up.nodes.has(n.id)&&!down.nodes.has(n.id));
+    link.classed('fade',l=>!up.edges.has(l._key)&&!down.edges.has(l._key));
+    link.classed('up',l=>up.edges.has(l._key));
+    link.classed('down',l=>down.edges.has(l._key));
+  }
+
+  svg.on('click',()=>clearFocus());
+
+  node.on('click',(e,d)=>{
+    e.stopPropagation();
+    showNodePanel(d);
+    focusNode(d);
+  });
+
+  const pad=30;
+  const minX=d3.min(nodes,d=>d.x - (d._w||40)/2);
+  const maxX=d3.max(nodes,d=>d.x + (d._w||40)/2);
+  const minY=d3.min(nodes,d=>d.y - (d._h||24)/2);
+  const maxY=d3.max(nodes,d=>d.y + (d._h||24)/2);
+  const spanX=Math.max(1, maxX - minX);
+  const spanY=Math.max(1, maxY - minY);
+  const scale=Math.min((W-2*pad)/spanX, (H-2*pad)/spanY, 1);
+  const tx=(W - spanX*scale)/2 - minX*scale;
+  const ty=(H - spanY*scale)/2 - minY*scale;
+  svg.call(zoom.transform, d3.zoomIdentity.translate(tx,ty).scale(scale));
+}
+
+function showNodePanel(d){
+  const p=document.getElementById('node-panel');
+  const pc=document.getElementById('panel-content');
+  p.classList.add('show');
+  const data=d.data||{};
+  pc.innerHTML=`
+    <div class="card-t">${d.node_type.toUpperCase()}</div>
+    <div style="font:700 14px var(--sans);color:var(--t);margin:6px 0">${esc(d.label)}</div>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+      <span style="font:800 18px var(--mono);color:${(d.risk_score||0)>=60?'var(--r)':(d.risk_score||0)>=30?'var(--y)':'var(--g)'}">${d.risk_score||0}</span>
+      <span style="font:600 8px var(--mono);color:var(--t3)">RISK SCORE</span>
+    </div>
+    <div style="font:400 9px var(--mono);color:var(--t2)">
+      ${Object.entries(data).filter(([k])=>k!=='type').map(([k,v])=>`
+        <div style="margin:4px 0"><span style="color:var(--t3)">${k}:</span>
+        <span style="color:var(--t)">${typeof v==='object'?JSON.stringify(v):v}</span></div>
+      `).join('')}
+    </div>
+    <div style="margin-top:12px;font:700 8px var(--mono);color:var(--t3);letter-spacing:.1em">ACTIONS</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
+      ${d.node_type==='path'?'<button class="tag" style="cursor:pointer;border-color:var(--r);color:var(--r)">Fuzz</button>':''}
+      ${d.node_type==='port'?'<button class="tag" style="cursor:pointer;border-color:var(--o);color:var(--o)">Service Scan</button>':''}
+      ${d.node_type==='url'?'<button class="tag" style="cursor:pointer;border-color:var(--y);color:var(--y)">Header Check</button>':''}
+      <button class="tag" style="cursor:pointer" onclick="openFindingModal(0,${JSON.stringify(d.label).replace(/"/g,'&quot;')})">+ Finding</button>
+    </div>`;
+}
+
+// ── Targets ──
+async function renderTargets(c){
+  if(!selectedSession){
+    c.innerHTML=`<div class="empty"><div class="big">◎</div>Select a session first.
+      ${sessions.map(s=>`<button onclick="selectSession(${s.id}).then(()=>render())" class="tag" style="cursor:pointer;margin:3px">${esc(s.name)}</button>`).join('')}</div>`;
+    return;
+  }
+  const targets=await GET(`/api/targets/${selectedSession.id}`);
+  c.innerHTML=`<div class="card-t" style="margin-bottom:8px">TARGETS — ${selectedSession.name} (${targets.length})</div>
+    ${targets.length?targets.map(t=>`
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font:700 12px var(--mono);color:var(--t)">${esc(t.domain)}</span>
+          <span style="font:800 11px var(--mono);color:${t.risk_score>=60?'var(--r)':t.risk_score>=30?'var(--y)':'var(--g)'}">Risk:${t.risk_score}</span>
+          <span style="flex:1"></span>
+          <button onclick="delTarget(${t.id})" style="padding:3px 8px;border-radius:4px;border:1px solid var(--bd2);background:transparent;color:var(--r);font:500 9px var(--mono);cursor:pointer">Delete</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font:400 9px var(--mono)">
+          <div><span style="color:var(--t3)">IPs:</span> ${(t.ips||[]).map(ip=>`<span class="tag">${ip}</span>`).join(' ')||'—'}</div>
+          <div><span style="color:var(--t3)">Ports:</span> ${(t.ports||[]).map(p=>`<span class="tag">${p}</span>`).join(' ')||'—'}</div>
+          <div><span style="color:var(--t3)">Paths:</span> ${(t.dirb||[]).map(p=>`<span class="tag" style="border-color:rgba(239,68,68,.3);color:var(--r)">${p}</span>`).join(' ')||'—'}</div>
+          <div><span style="color:var(--t3)">Infra:</span> <span class="tag">${JSON.stringify(t.infra||{})}</span></div>
+        </div>
+        ${(t.alive||[]).length?`<div style="margin-top:6px;font:400 9px var(--mono)"><span style="color:var(--t3)">Alive:</span>
+          ${t.alive.map(a=>`<div style="margin:2px 0;color:var(--g)">${a.url||''} → ${a.final_url||''} (${a.status||'?'})</div>`).join('')}
+        </div>`:''}
+      </div>
+    `).join(''):'<div class="empty">No targets in this session.</div>'}`;
+}
+
+async function delTarget(id){
+  if(!confirm('Delete target?'))return;
+  await DEL(`/api/targets/${id}`);render();
+}
+
+// ── Findings CRUD ──
+async function renderFindings(c){
+  const sid=selectedSession?.id;
+  const findings=sid?await GET(`/api/findings/${sid}`):await GET('/api/findings');
+  c.innerHTML=`
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <button onclick="selectedSession=null;renderFindings(document.getElementById('cnt'))" class="tag" style="cursor:pointer;${!sid?'background:var(--a);color:#fff':''}">All</button>
+      ${sessions.map(s=>`<button onclick="selectSession(${s.id}).then(()=>renderFindings(document.getElementById('cnt')))" class="tag" style="cursor:pointer;${sid===s.id?'background:var(--a);color:#fff':''}">${esc(s.name)}</button>`).join('')}
+    </div>
+    ${findings.length?`<table class="tbl"><tr><th>Severity</th><th>Title</th><th>Category</th><th>Endpoint</th><th>Status</th><th>Actions</th></tr>
+      ${findings.map(f=>`<tr>
+        <td><span class="sev ${f.severity}">${f.severity}</span></td>
+        <td style="color:var(--t);font-weight:600;max-width:250px">${esc(f.title)}</td>
+        <td>${esc(f.category)}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--a)">${esc(f.endpoint||'')}</span></td>
+        <td><span class="tag">${f.status}</span></td>
+        <td class="acts">
+          <button onclick="openFindingModal(${f.id})">Edit</button>
+          <button class="del" onclick="delFinding(${f.id})">Del</button>
+        </td>
+      </tr>`).join('')}</table>`
+    :'<div class="empty"><div class="big">⚠</div>No findings yet.</div>'}`;
+}
+
+async function openFindingModal(id,prefillEndpoint=''){
+  let f=id?(await GET('/api/findings')).find(x=>x.id===id)
+    :{title:'',severity:'MEDIUM',category:'',detail:'',recommendation:'',endpoint:prefillEndpoint,status:'open'};
+  if(!f)f={title:'',severity:'MEDIUM',category:'',detail:'',recommendation:'',endpoint:prefillEndpoint,status:'open'};
+  showModal(`<h3>${id?'Edit':'New'} Finding</h3>
+    <label>Title</label><input id="m-title" value="${esc(f.title)}">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Severity</label><select id="m-sev">
+        ${['CRITICAL','HIGH','MEDIUM','LOW','INFO'].map(s=>`<option ${f.severity===s?'selected':''}>${s}</option>`).join('')}
+      </select></div>
+      <div><label>Category</label><input id="m-cat" value="${esc(f.category)}"></div>
+    </div>
+    <label>Endpoint</label><input id="m-ep" value="${esc(f.endpoint||'')}">
+    <label>Detail</label><textarea id="m-det">${esc(f.detail||'')}</textarea>
+    <label>Recommendation</label><textarea id="m-rec">${esc(f.recommendation||'')}</textarea>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Status</label><select id="m-stat">
+        ${['open','confirmed','fixed','accepted'].map(s=>`<option ${f.status===s?'selected':''}>${s}</option>`).join('')}
+      </select></div>
+      <div><label>Session</label><select id="m-sid">
+        <option value="">None</option>
+        ${sessions.map(s=>`<option value="${s.id}" ${f.session_id===s.id||(selectedSession?.id===s.id&&!id)?'selected':''}>${esc(s.name)}</option>`).join('')}
+      </select></div>
+    </div>
+    <div class="btns">
+      <button onclick="closeModal()">Cancel</button>
+      <button class="primary" onclick="saveFinding(${id||0})">${id?'Update':'Create'}</button>
+    </div>`);
+}
+
+async function saveFinding(id){
+  const d={title:$('#m-title').value,severity:$('#m-sev').value,category:$('#m-cat').value,
+    endpoint:$('#m-ep').value,detail:$('#m-det').value,recommendation:$('#m-rec').value,
+    status:$('#m-stat').value,session_id:$('#m-sid').value?parseInt($('#m-sid').value):null};
+  if(id) await PUT(`/api/findings/${id}`,d); else await POST('/api/findings',d);
+  closeModal();await refresh();render();
+}
+
+async function delFinding(id){
+  if(!confirm('Delete finding?'))return;
+  await DEL(`/api/findings/${id}`);await refresh();render();
+}
+
+// ── Timeline ──
+async function renderTimeline(c){
+  if(!selectedSession){
+    c.innerHTML=`<div class="empty"><div class="big">⟐</div>Select a session first.
+      ${sessions.map(s=>`<button onclick="selectSession(${s.id}).then(()=>render())" class="tag" style="cursor:pointer;margin:3px">${esc(s.name)}</button>`).join('')}</div>`;
+    return;
+  }
+  const corrs=await GET(`/api/correlations/${selectedSession.id}`);
+  c.innerHTML=`<div class="card-t" style="margin-bottom:8px">TIMELINE — ${selectedSession.name}</div>
+    ${corrs.length?corrs.map((g,i)=>`
+      <div class="card" style="border-left:3px solid ${g.risk_note?'var(--r)':'var(--a)'}">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font:800 11px var(--mono);color:var(--a)">#${g.group_id}</span>
+          <span style="font:600 11px var(--sans);color:var(--t)">${esc(g.click_element||'Action')}</span>
+          <span style="flex:1"></span>
+          <span style="font:400 9px var(--mono);color:var(--t3)">${new Date(g.trigger_time).toLocaleTimeString()}</span>
+        </div>
+        ${g.ui_label?`<div style="font:400 9px var(--mono);color:var(--v);margin-bottom:4px">📍 ${esc(g.ui_label)}</div>`:''}
+        ${(g.endpoints||[]).length?`<div style="font:400 9px var(--mono);margin-bottom:4px">${g.endpoints.map(e=>`<div style="color:var(--g)">→ ${e.method} ${e.url} (${e.status})</div>`).join('')}</div>`:''}
+        ${(g.dom_changes||[]).length?`<div style="font:400 9px var(--mono);color:var(--y)">${g.dom_changes.map(d=>`<div>⟡ ${typeof d==='string'?d:d.change||JSON.stringify(d)}</div>`).join('')}</div>`:''}
+        ${g.risk_note?`<div style="font:400 9px var(--mono);color:var(--r);margin-top:4px">⚠ ${esc(g.risk_note)}</div>`:''}
+      </div>
+    `).join(''):'<div class="empty"><div class="big">⟐</div>No recorded events yet. Timeline will populate when recording sessions.</div>'}`;
+}
+
+// ── Modal ──
+function showModal(html){document.body.insertAdjacentHTML('beforeend',`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`);}
+function closeModal(){document.querySelector('.modal-bg')?.remove();}
+function $(sel){return document.querySelector(sel);}
+function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+
+// ── Sample Data ──
+const SAMPLE_DATA={
+  "root_domain":"gotroot.co.kr",
+  "targets":[{
+    "id":1,
+    "domain":"gotroot.co.kr",
+    "ips":["121.254.168.50","121.254.168.51"],
+    "dns_meta":{"mx":[],"spf":[],"dmarc":[],"ptr":{"exists":true,"values":["imweb-hosting-50.lgcns.com","imweb-hosting-51.lgcns.com"],"forward_match":true},"txt":[],"verify":[]},
+    "ports":[80,443],
+    "port_detail":{"80":"nginx","443":"nginx"},
+    "alive":[{"url":"https://gotroot.co.kr","final_url":"https://gotroot.co.kr/","status":200,"server":"nginx","cdn":false,"cdn_name":"imweb","cdn_type":"saas","chain_status_codes":[200]}],
+    "dirb":["/login.cm","/logout.cm","/contactus","/Consulting","/22","/23","/24","/42","/info","/education"],
+    "ip_ports":{},
+    "infra":{"type":"saas","provider":"imweb.me"}
+  }]
+};
+
+// ── Init ──
+(async()=>{await refresh();render();})();
+</script>
+</body>
+</html>
